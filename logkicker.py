@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -194,21 +192,4 @@ def process_log(filepath):
                 continue
             log_entries.append(LogEntry(line))
         return log_entries
-
-def main(filepath):
-    log_entries = process_log(filepath)
-    return log_entries
-
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <filepath>")
-        sys.exit(1)
-    
-    filepath = sys.argv[1]
-    entries = main(filepath)
-    print(f"Processed {len(entries)} log entries")
-
-
 
