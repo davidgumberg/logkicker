@@ -70,6 +70,8 @@ def main(filepath):
                 NotImplemented
             case ReasonsToCare.CB_RECONSTRUCTION:
                 NotImplemented
+            case ReasonsToCare.NEW_BLOCK:
+                NotImplemented
             case ReasonsToCare.WE_DONT:
                 continue
 
