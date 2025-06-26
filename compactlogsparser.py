@@ -25,6 +25,10 @@ def is_cb_send(entry:logkicker.LogEntry) -> bool:
 
 def if_we_care(entry:logkicker.LogEntry) -> bool:
     if is_cb_send(entry) or is_cb_reconstruction(entry):
+new_block_pattern = re.compile(r'PeerManager::NewPoWValidBlock sending header-and-ids ([0-9a-f]+) to peer=(\d+)')
+
+def is_new_block_pattern(entry:logkicker.LogEntry) -> bool:
+    if entry.metadata.category == "net" and new_block_pattern.match(entry.body):
         return True
     else:
         return False
