@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from enum import Enum
 import re
 import logkicker
 
@@ -23,8 +24,6 @@ def is_cb_send(entry:logkicker.LogEntry) -> bool:
     else:
         return False
 
-def if_we_care(entry:logkicker.LogEntry) -> bool:
-    if is_cb_send(entry) or is_cb_reconstruction(entry):
 new_block_pattern = re.compile(r'PeerManager::NewPoWValidBlock sending header-and-ids ([0-9a-f]+) to peer=(\d+)')
 
 def is_new_block_pattern(entry:logkicker.LogEntry) -> bool:
@@ -33,10 +32,36 @@ def is_new_block_pattern(entry:logkicker.LogEntry) -> bool:
     else:
         return False
 
+class ReasonsToCare(Enum):
+    WE_DONT = 0
+    CB_SEND = 1
+    CB_RECONSTRUCTION = 2
+    NEW_BLOCK = 3
+
+def we_care(entry:logkicker.LogEntry) -> ReasonsToCare:
+    if is_cb_send(entry):
+        return ReasonsToCare.CB_SEND
+    elif is_cb_reconstruction(entry):
+        return ReasonsToCare.CB_RECONSTRUCTION
+    elif is_new_block_pattern(entry):
+        return ReasonsToCare.NEW_BLOCK
+    else:
+        return ReasonsToCare.WE_DONT
+
 def main(filepath):
     looking_for_max_send = True
     for entry in logkicker.process_log_generator(filepath, if_we_care):
         print(entry.body)
+    looking_for_max_send = False
+    
+    for entry in logkicker.process_log_generator(filepath):
+        match we_care(entry):
+            case ReasonsToCare.CB_SEND:
+                NotImplemented
+            case ReasonsToCare.CB_RECONSTRUCTION:
+                NotImplemented
+            case ReasonsToCare.WE_DONT:
+                continue
 
 if __name__ == "__main__":
     import sys
