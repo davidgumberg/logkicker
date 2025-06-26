@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from dataclasses import dataclass
 from enum import Enum
 import re
 import logkicker
@@ -48,10 +49,19 @@ def we_care(entry:logkicker.LogEntry) -> ReasonsToCare:
     else:
         return ReasonsToCare.WE_DONT
 
+@dataclass
+class BlockReceived:
+    txn_count: int
+    received_cb_bytes: int
+    received_cb_missing_bytes: int
+
+@dataclass
+class BlockSent:
+    peer_id: int
+    block_received: BlockReceived
+    cmpctblock_bytes_sent: int
+    
 def main(filepath):
-    looking_for_max_send = True
-    for entry in logkicker.process_log_generator(filepath, if_we_care):
-        print(entry.body)
     looking_for_max_send = False
     
     for entry in logkicker.process_log_generator(filepath):
