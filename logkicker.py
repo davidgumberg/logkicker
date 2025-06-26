@@ -110,6 +110,10 @@ class LogEntry:
     
     # The whole burger's here, this is needed in order to split the body from
     # metadata.
+    # todo: don't process all metadata up-front, we need more granular ways to
+    # inquire about metadata, so that we can return early if e.g. we're
+    # filtering on category, just find a category and return, leave other
+    # fields unpopulated.
     def process_line_metadata(self, logline):
         thread = None
         file = None
