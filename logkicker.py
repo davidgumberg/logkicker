@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Callable, Generator, Optional
 import dateutil.parser
 
