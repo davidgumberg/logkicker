@@ -54,10 +54,11 @@ def we_care(entry:logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[re.Match[
 
 @dataclass
 class BlockReceived:
-    # txn_count: int = 0
-    received_cb_bytes: int = 0
-    received_cb_missing_bytes: int = 0
-    received_cb_missing_tx_count: int = 0
+    cb_size_bytes: int = 0
+    cb_missing_bytes: int = 0
+    cb_missing_tx_count: int = 0
+    # this stat is only set for a node that does prefills
+    cb_bytes_from_extra_pool: Optional[int] = None
 
 @dataclass
 class BlockSent:
@@ -78,13 +79,16 @@ def main(filepath):
             continue
         match why:
             case ReasonsToCare.CB_RECEIVE:
-                blocks_received[match.group(1)] = BlockReceived(received_cb_bytes = int(match.group(2)))
+                blocks_received[match.group(1)] = BlockReceived(cb_size_bytes = int(match.group(2)))
             case ReasonsToCare.CB_RECONSTRUCTION:
                 block = blocks_received[match.group(1)]
-                block.received_cb_missing_tx_count = int(match.group(5))
-                block.received_cb_missing_bytes = int(match.group(6))
+                block.cb_missing_tx_count = int(match.group(5))
+                block.cb_missing_bytes = int(match.group(6))
             case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED: # lucky, they have the same pattern!
                 blockhash = match.group(1)
+                # On rare occassions we receive full-sized blocks, so we don't know their cb size.
+                if blockhash not in blocks_received:
+                    continue
                 pending_block_send = BlockSent(block_received = blocks_received[blockhash], peer_id = int(match.group(2)))
                 blocks_sent[blockhash].append(pending_block_send)
             case ReasonsToCare.CB_SEND:
@@ -100,7 +104,7 @@ def main(filepath):
                 pending_max_send.tcp_window_bytes = int(match.group(1))
                 pending_max_send = None
 
-    failed_blocks = [block for block in blocks_received.values() if block.received_cb_missing_tx_count > 0]
+    failed_blocks = [block for block in blocks_received.values() if block.cb_missing_tx_count > 0]
 
     reco_fail_count = len(failed_blocks)
     total_blocks_received = len(blocks_received)
@@ -108,17 +112,61 @@ def main(filepath):
     reco_rate = (total_blocks_received - reco_fail_count) / total_blocks_received * 100
     print(f"Reconstruction rate was {reco_rate}%")
         
+    total_cb_sent = total_cb_in_need = total_prefill_bytes = total_available_bytes_in_window = 0
+    prefills_that_fit = 0
+    # blocks that exceeded the first rtt window without any prefills
+    exceeded_without_prefill = 0
+    
     # Pretty print the blocks_sent data
-    print("Blocks Sent Summary:")
-    print("=" * 50)
     for block_hash, sent_list in blocks_sent.items():
-        print(f"\nBlock: {block_hash}")
-        print(f"Sent to {len(sent_list)} peer(s):")
-        for i, block_sent in enumerate(sent_list, 1):
-            print(f"  Peer {i}:")
-            pprint.pprint(block_sent, indent=4, width=100)
+        if block_hash not in blocks_received:
+            continue
+        received = blocks_received[block_hash]
+        # the size of the CMPCTBLOCK message we received.
+        received_size = received.cb_size_bytes
+
+        for sent in sent_list:
+            # running total of CMPCTBLOCK messages sent
+            total_cb_sent += 1
+            # running total of tcp windows for stats
+            total_available_bytes_in_window += sent.tcp_window_bytes
+
+            prefill_size = sent.cb_bytes_sent - received_size
+            total_prefill_bytes += prefill_size
+
+            # The number of rtt's it would have taken to announce the
+            # CMPCTBLOCK with no additional prefilling
+            rtts_needed_with_no_prefill:int = received_size // sent.tcp_window_bytes
+            if (rtts_needed_with_no_prefill > 1):
+                exceeded_without_prefill += 1
+            # Bytes we've used in this window
+            bytes_used_in_tcp_window = received_size % sent.tcp_window_bytes
+            # The number of bytes of overhead we have up to the next tcp window boundary
+            bytes_left_in_tcp_window:int = sent.tcp_window_bytes - bytes_used_in_tcp_window
+
+            if prefill_size > 0:
+                if prefill_size <= bytes_left_in_tcp_window:
+                    # we got it for free 😎
+                    prefills_that_fit += 1
+                # this only works for the prefilling node. extra pool recovery size
+                # is not logged, but we can recover this info from the difference
+                # between sent size, todo: add logging to the branch
+                # track the total number of cb's that needed prefills
+                total_cb_in_need += 1
+                received.cb_bytes_from_extra_pool = sent.cb_bytes_sent - received_size - received.cb_missing_bytes
 
 
+    avg_prefill_bytes = total_prefill_bytes / total_cb_in_need
+    avg_available_bytes = total_available_bytes_in_window / total_cb_sent
+
+    prefill_needed_rate = total_cb_in_need / total_cb_sent
+    prefill_fit_rate = prefills_that_fit / total_cb_in_need
+    already_over_rtt_rate = exceeded_without_prefill / total_cb_sent
+    print(f"{exceeded_without_prefill}/{total_cb_sent} CMPCTBLOCK's sent were already over the window for a single RTT. ({already_over_rtt_rate * 100:.2f}%)")
+    print(f"{total_cb_in_need}/{total_cb_sent} blocks required prefills. ({prefill_needed_rate * 100:.2f}%)")
+    print(f"For blocks needing prefills, average bytes needed for prefill: {avg_prefill_bytes:.2f}")
+    print(f"Average available bytes up to the next tcp window boundary for all CMPCTBLOCK messages sent: {avg_available_bytes:.2f}")
+    print(f"{prefills_that_fit} / {total_cb_in_need} blocks that needed prefills also would have had prefills that fit in the window. ({prefill_fit_rate * 100:.2f}%)")
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:

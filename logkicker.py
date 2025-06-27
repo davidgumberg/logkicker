@@ -71,7 +71,7 @@ LOGGINGCATEGORY_STRINGS = frozenset([
 METADATA_PATTERN = re.compile(r'^(\s*(?:\[[^\]]+\]\s*)*)(.*?)$')
 BRACKET_PATTERN = re.compile(r'\[([^\]]+)\]')
 
-# AI Slop ⛽
+# Combine categories 
 LOGCATEGORY_PATTERN = re.compile(r'^(' + '|'.join(re.escape(cat) for cat in LOGGINGCATEGORY_STRINGS) + r')(?::(\w+))?$')
 
 # e.g. src/net_processing.cpp:1154
