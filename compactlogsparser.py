@@ -155,18 +155,19 @@ def main(filepath):
                 total_cb_in_need += 1
                 received.cb_bytes_from_extra_pool = sent.cb_bytes_sent - received_size - received.cb_missing_bytes
 
-
-    avg_prefill_bytes = total_prefill_bytes / total_cb_in_need
-    avg_available_bytes = total_available_bytes_in_window / total_cb_sent
-
-    prefill_needed_rate = total_cb_in_need / total_cb_sent
-    prefill_fit_rate = prefills_that_fit / total_cb_in_need
     already_over_rtt_rate = exceeded_without_prefill / total_cb_sent
     print(f"{exceeded_without_prefill}/{total_cb_sent} CMPCTBLOCK's sent were already over the window for a single RTT. ({already_over_rtt_rate * 100:.2f}%)")
-    print(f"{total_cb_in_need}/{total_cb_sent} blocks required prefills. ({prefill_needed_rate * 100:.2f}%)")
-    print(f"For blocks needing prefills, average bytes needed for prefill: {avg_prefill_bytes:.2f}")
+    avg_available_bytes = total_available_bytes_in_window / total_cb_sent
     print(f"Average available bytes up to the next tcp window boundary for all CMPCTBLOCK messages sent: {avg_available_bytes:.2f}")
-    print(f"{prefills_that_fit} / {total_cb_in_need} blocks that needed prefills also would have had prefills that fit in the window. ({prefill_fit_rate * 100:.2f}%)")
+    if total_prefill_bytes > 0:
+        avg_prefill_bytes = total_prefill_bytes / total_cb_in_need
+
+        prefill_needed_rate = total_cb_in_need / total_cb_sent
+        prefill_fit_rate = prefills_that_fit / total_cb_in_need
+        print(f"For blocks needing prefills, average bytes used for prefill: {avg_prefill_bytes:.2f}")
+        print(f"{total_cb_in_need}/{total_cb_sent} blocks required prefills. ({prefill_needed_rate * 100:.2f}%)")
+        print(f"{prefills_that_fit} / {total_cb_in_need} blocks that needed prefills also would have had prefills that fit in the window. ({prefill_fit_rate * 100:.2f}%)")
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:
