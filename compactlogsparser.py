@@ -128,8 +128,6 @@ def main(filepath):
         for sent in sent_list:
             # running total of CMPCTBLOCK messages sent
             total_cb_sent += 1
-            # running total of tcp windows for stats
-            total_available_bytes_in_window += sent.tcp_window_bytes
 
             prefill_size = sent.cb_bytes_sent - received_size
             total_prefill_bytes += prefill_size
@@ -139,12 +137,17 @@ def main(filepath):
             rtts_needed_with_no_prefill:int = received_size // sent.tcp_window_bytes
             if (rtts_needed_with_no_prefill > 1):
                 exceeded_without_prefill += 1
-            # Bytes we've used in this window
+            # Bytes used in this window before prefill
             bytes_used_in_tcp_window = received_size % sent.tcp_window_bytes
             # The number of bytes of overhead we have up to the next tcp window boundary
             bytes_left_in_tcp_window:int = sent.tcp_window_bytes - bytes_used_in_tcp_window
 
+            # running total of tcp windows for stats
+            total_available_bytes_in_all_windows += bytes_left_in_tcp_window
+
             if prefill_size > 0:
+                # available
+                total_available_bytes_in_needed_windows += bytes_left_in_tcp_window
                 if prefill_size <= bytes_left_in_tcp_window:
                     # we got it for free 😎
                     prefills_that_fit += 1
@@ -157,10 +160,12 @@ def main(filepath):
 
     already_over_rtt_rate = exceeded_without_prefill / total_cb_sent
     print(f"{exceeded_without_prefill}/{total_cb_sent} CMPCTBLOCK's sent were already over the window for a single RTT. ({already_over_rtt_rate * 100:.2f}%)")
-    avg_available_bytes = total_available_bytes_in_window / total_cb_sent
-    print(f"Average available bytes up to the next tcp window boundary for all CMPCTBLOCK messages sent: {avg_available_bytes:.2f}")
+    avg_available_bytes = total_available_bytes_in_all_windows / total_cb_sent
+    print(f"Avg available bytes up to the next tcp window boundary for all CMPCTBLOCK messages sent: {avg_available_bytes:.2f}")
     if total_prefill_bytes > 0:
         avg_prefill_bytes = total_prefill_bytes / total_cb_in_need
+        avg_available_bytes_for_needed = total_available_bytes_in_needed_windows / total_cb_sent
+        print(f"Average available bytes up to the next tcp window boundary for CMPCTBLOCK messages where we prefilled: {avg_available_bytes_for_needed:.2f}")
 
         prefill_needed_rate = total_cb_in_need / total_cb_sent
         prefill_fit_rate = prefills_that_fit / total_cb_in_need
