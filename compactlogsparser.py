@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from collections import defaultdict
 import pprint
 from dataclasses import dataclass
@@ -164,7 +168,142 @@ def parse_cb_log(filepath: str) -> Tuple[dict[str, BlockReceived], dict[str, lis
                 pending_max_send = None
     return blocks_received, blocks_sent
 
+def create_dataframes(blocks_received, blocks_sent):
+    # Create DataFrame for received blocks
+    received_df = pd.DataFrame.from_dict(blocks_received, orient='index')
+    received_df.reset_index(inplace=True)
+    received_df.rename(columns={'index': 'blockhash'}, inplace=True)
+    
+    # Create DataFrame for sent blocks, including data from received blocks
+    sent_data = []
+    for blockhash, sent_list in blocks_sent.items():
+        if blockhash not in blocks_received:
+            continue  # Skip if blockhash not in received, as per original logic
+        received = blocks_received[blockhash]
+        for sent in sent_list:
+            sent_dict = {
+                'blockhash': blockhash,
+                'peer_id': sent.peer_id,
+                'time_sent': sent.time_sent,
+                'cb_bytes_sent': sent.cb_bytes_sent,
+                'tcp_window_bytes': sent.tcp_window_bytes,
+                'cb_size_bytes': received.cb_size_bytes,  # From received block
+                'cb_missing_bytes': received.cb_missing_bytes,
+                'cb_missing_tx_count': received.cb_missing_tx_count,
+            }
+            sent_data.append(sent_dict)
+    sent_df = pd.DataFrame(sent_data)
+    
+    return received_df, sent_df
 
+def compute_stats(blocks_received, blocks_sent):
+    received_df, sent_df = create_dataframes(blocks_received, blocks_sent)
+    
+    # Add derived columns for analysis
+    sent_df['prefill_size'] = sent_df['cb_bytes_sent'] - sent_df['cb_size_bytes']
+    sent_df['rtts_needed_no_prefill'] = (sent_df['cb_size_bytes'] // sent_df['tcp_window_bytes']).astype(int)
+    sent_df['bytes_used_in_window'] = sent_df['cb_size_bytes'] % sent_df['tcp_window_bytes']
+    sent_df['bytes_left_in_window'] = sent_df['tcp_window_bytes'] - sent_df['bytes_used_in_window']
+    sent_df['cb_bytes_from_extra_pool'] = sent_df['cb_bytes_sent'] - sent_df['cb_size_bytes'] - sent_df['cb_missing_bytes']  # Computed per send
+    
+    # Reconstruction stats
+    total_blocks = len(received_df)
+    failing_blocks = (received_df['cb_missing_tx_count'] > 0).sum()
+    fail_rate = failing_blocks / total_blocks if total_blocks > 0 else 0
+    reco_rate = 1 - fail_rate
+    print(f"{failing_blocks} out of {total_blocks} blocks received failed reconstruction.")
+    print(f"Reconstruction rate was {reco_rate * 100:.2f}%")
+    
+    # Sending stats
+    total_cb_sent = len(sent_df)
+    sent_per_block = total_cb_sent / total_blocks if total_blocks > 0 else 0
+    exceeded_without_prefill = (sent_df['rtts_needed_no_prefill'] > 1).sum()
+    already_over_rtt_rate = exceeded_without_prefill / total_cb_sent if total_cb_sent > 0 else 0
+    
+    avg_available_bytes_all = sent_df['bytes_left_in_window'].mean()
+    
+    prefilled_sends = sent_df[sent_df['prefill_size'] > 0]
+    total_prefilled_cb_sent = len(prefilled_sends)
+    if total_prefilled_cb_sent > 0:
+        avg_prefill_bytes = prefilled_sends['prefill_size'].mean()
+        avg_extra_prefill_bytes = prefilled_sends['cb_bytes_from_extra_pool'].mean()
+        avg_prefill_without_extra = (prefilled_sends['prefill_size'] - prefilled_sends['cb_bytes_from_extra_pool']).mean()
+        prefills_that_fit = (prefilled_sends['prefill_size'] <= prefilled_sends['bytes_left_in_window']).sum()
+        prefill_fit_rate = prefills_that_fit / total_prefilled_cb_sent
+        no_extra_prefills_that_fit_count = ((prefilled_sends['prefill_size'] - prefilled_sends['cb_bytes_from_extra_pool']) <= prefilled_sends['bytes_left_in_window']).sum()
+        no_extra_prefills_that_fit_rate = no_extra_prefills_that_fit_count / total_prefilled_cb_sent
+        total_available_bytes_in_needed_windows = prefilled_sends['bytes_left_in_window'].sum()
+        avg_available_bytes_for_needed = total_available_bytes_in_needed_windows / total_prefilled_cb_sent
+        prefill_needed_rate = total_prefilled_cb_sent / total_cb_sent
+    else:
+        avg_prefill_bytes = 0
+        avg_extra_prefill_bytes = 0
+        avg_prefill_without_extra = 0
+        prefills_that_fit = 0
+        prefill_fit_rate = 0
+        no_extra_prefills_that_fit_rate = 0
+        avg_available_bytes_for_needed = 0
+        prefill_needed_rate = 0
+    
+    print(f"{total_cb_sent} CMPCTBLOCK messages sent, {sent_per_block:.2f} per block.")
+    print(f"{exceeded_without_prefill}/{total_cb_sent} CMPCTBLOCK's sent were already over the window for a single RTT before prefilling. ({already_over_rtt_rate * 100:.2f}%)")
+    print(f"Avg available prefill bytes for all CMPCTBLOCK's we sent: {avg_available_bytes_all:.2f}")
+    if total_prefilled_cb_sent > 0:
+        print(f"Avg available prefill bytes for prefilled CMPCTBLOCK's we sent: {avg_available_bytes_for_needed:.2f}")
+        print(f"Avg total prefill size for CMPCTBLOCK's we prefilled: {avg_prefill_bytes:.2f}")
+        print(f"Avg bytes of prefill that were extra_txn: {avg_extra_prefill_bytes:.2f}")
+        print(f"Avg prefill size w/o extras: {avg_prefill_without_extra:.2f}")
+        print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks sent required prefills. ({prefill_needed_rate * 100:.2f}%)")
+        print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
+        print(f"{no_extra_prefills_that_fit_count}/{total_prefilled_cb_sent} prefilled blocks would have fit if we hadn't prefilled extra txn's. ({no_extra_prefills_that_fit_rate * 100:.2f}%)")
+    
+    # Return the DataFrames for further use (e.g., plotting or CSV output)
+    return received_df, sent_df
+
+# New function to create plots
+def make_plots(blocks_received, blocks_sent):
+    received_df, sent_df = create_dataframes(blocks_received, blocks_sent)
+    
+    # Add derived columns if not already present (from compute_stats)
+    if 'prefill_size' not in sent_df.columns:
+        sent_df['prefill_size'] = sent_df['cb_bytes_sent'] - sent_df['cb_size_bytes']
+        sent_df['bytes_left_in_window'] = sent_df['tcp_window_bytes'] - (sent_df['cb_size_bytes'] % sent_df['tcp_window_bytes'])
+    
+    # Filter for prefilled sends for plotting
+    prefilled_sends = sent_df[sent_df['prefill_size'] > 0]
+    
+    # Plot 1: Histogram of prefill sizes for prefilled blocks
+    plt.figure(figsize=(10, 6))
+    sns.histplot(prefilled_sends['prefill_size'], bins=50, kde=True)
+    plt.title('Histogram of Prefill Sizes for Prefilled Blocks')
+    plt.xlabel('Prefill Size (bytes)')
+    plt.ylabel('Frequency')
+    plt.show()
+    
+    # Plot 2: Scatter plot of compact block size vs TCP window size, colored by prefill status
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=sent_df, x='cb_size_bytes', y='tcp_window_bytes', hue=(sent_df['prefill_size'] > 0))
+    plt.title('Compact Block Size vs TCP Window Size')
+    plt.xlabel('Compact Block Size (bytes)')
+    plt.ylabel('TCP Window Size (bytes)')
+    plt.legend(title='Prefill Needed')
+    plt.show()
+    
+    # Additional plots can be added here, e.g., reconstruction failure rate over time or other distributions
+
+# New function to output data to CSV
+def output_csv(blocks_received, blocks_sent, filename='cb_data_output.csv'):
+    received_df, sent_df = create_dataframes(blocks_received, blocks_sent)
+    
+    # Add derived columns for completeness in the CSV
+    sent_df['prefill_size'] = sent_df['cb_bytes_sent'] - sent_df['cb_size_bytes']
+    sent_df['rtts_needed_no_prefill'] = (sent_df['cb_size_bytes'] // sent_df['tcp_window_bytes']).astype(int)
+    sent_df['bytes_left_in_window'] = sent_df['tcp_window_bytes'] - (sent_df['cb_size_bytes'] % sent_df['tcp_window_bytes'])
+    sent_df['cb_bytes_from_extra_pool'] = sent_df['cb_bytes_sent'] - sent_df['cb_size_bytes'] - sent_df['cb_missing_bytes']
+    
+    # Save the sent DataFrame to CSV (as it contains more detailed per-event data)
+    sent_df.to_csv(filename, index=False)
+    print(f"Data saved to {filename}")
 
 def main(filepath):
     blocks_received, blocks_sent = parse_cb_log(filepath)
@@ -258,11 +397,15 @@ def main(filepath):
         print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
         print(f"{no_extra_prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks would have fit if we hadn't prefilled extra txn's. ({no_extra_prefills_that_fit / total_prefilled_cb_sent * 100:.2f}%)")
 
+    compute_stats(blocks_received, blocks_sent)
+    make_plots(blocks_received, blocks_sent)
+    output_csv(blocks_received, blocks_sent)
+
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:
-        print("Usage: python script.py <filepath>")
+        print("Usage: compactlogsparser.py <path-to-debug.log>")
         sys.exit(1)
 
     filepath = sys.argv[1]
