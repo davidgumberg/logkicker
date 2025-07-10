@@ -8,23 +8,22 @@ import re
 from typing import Optional, Tuple
 import logkicker
 
-# Successfully reconstructed block 000000000000000000000fec9bd60e4700c173a61195b46527bda8861f6b1276 with 1 txn prefilled, 4105 txn from mempool (incl at least 0 from extra pool) and 0 txn (0 bytes) requested
-CB_RECONSTRUCTION_PATTERN = re.compile(r'Successfully reconstructed block ([0-9a-f]+) with (\d+) txn prefilled, (\d+) txn from mempool \(incl at least (\d+) from extra pool\) and (\d+) txn \((\d+) bytes\) requested')
 
-# Initialized PartiallyDownloadedBlock for block 00000000000000000002165564043bef508ec2a8ddf81e15916114cbb5ce632b using a cmpctblock of 14691 bytes
-CB_RECEIVE_PATTERN = re.compile(r'Initialized PartiallyDownloadedBlock for block ([0-9a-f]+) using a cmpctblock of (\d+) bytes')
+@dataclass
+class BlockReceived:
+    cb_size_bytes: int = 0
+    cb_missing_bytes: int = 0
+    cb_missing_tx_count: int = 0
+    cb_bytes_from_extra_pool: Optional[int] = None
 
-# sending cmpctblock (25101 bytes) peer=1
-CB_SEND_PATTERN = re.compile(r'sending cmpctblock \((\d+) bytes\) peer=(\d+)')
 
-# PeerManager::NewPoWValidBlock sending header-and-ids 00000000000000000002165564043bef508ec2a8ddf81e15916114cbb5ce632b to peer=11
-CB_TO_ANNOUNCE_PATTERN = re.compile(r'PeerManager::NewPoWValidBlock sending header-and-ids ([0-9a-f]+) to peer=(\d+)')
+@dataclass
+class BlockSent:
+    block_received: BlockReceived
+    peer_id: int
+    cb_bytes_sent: int = 0
+    tcp_window_bytes: int = 0
 
-# received getdata for: cmpctblock 0000000000000000000085ae6fe4bb42bb2395c4fce575eac8f8dcaa8bea0750 peer=3
-CB_REQUESTED_PATTERN = re.compile(r'received getdata for: cmpctblock ([0-9a-f]+) peer=(\d+)')
-
-#     - Max send per-rtt: 14480 bytes
-NET_MAX_SEND_PATTERN = re.compile(r'\s*- Max send per-rtt: (\d+) bytes') # We're gonna strip it
 
 class ReasonsToCare(Enum):
     WE_DONT = 0
@@ -35,94 +34,149 @@ class ReasonsToCare(Enum):
     CB_REQUESTED = 5
     NET_MAX_SEND = 6
 
-def we_care(entry:logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[re.Match[str]]]:
-    if entry.metadata.category == "net":
-        if match := CB_SEND_PATTERN.match(entry.body):
-            return ReasonsToCare.CB_SEND, match
-        elif match := CB_TO_ANNOUNCE_PATTERN.match(entry.body):
-            return ReasonsToCare.CB_TO_ANNOUNCE, match
-        elif match := CB_REQUESTED_PATTERN.match(entry.body):
-            return ReasonsToCare.CB_REQUESTED, match
-        elif match := NET_MAX_SEND_PATTERN.match(entry.body):
-            return ReasonsToCare.NET_MAX_SEND, match
-    elif entry.metadata.category == "cmpctblock":
-        if match := CB_RECEIVE_PATTERN.match(entry.body):
-            return ReasonsToCare.CB_RECEIVE, match
-        elif match := CB_RECONSTRUCTION_PATTERN.match(entry.body):
-            return ReasonsToCare.CB_RECONSTRUCTION, match
+
+@dataclass(frozen=True)
+class LogPattern:
+    """
+    Encapsulates a log pattern, its category, the reason it's important,
+    and how to parse its captured data.
+    """
+    reason: ReasonsToCare
+    category: str
+    regex: re.Pattern[str]
+    # Maps a captured field name to a function for type conversion (e.g., int)
+    # type_casts: Dict[str, TypeConverter] = field(default_factory=dict)
+
+
+LOG_PATTERNS = [
+    LogPattern(
+        reason=ReasonsToCare.CB_RECONSTRUCTION,
+        category="cmpctblock",
+        # Successfully reconstructed block 000000000000000000000fec9bd60e4700c173a61195b46527bda8861f6b1276 with 1 txn prefilled, 4105 txn from mempool (incl at least 0 from extra pool) and 0 txn (0 bytes) requested
+        regex=re.compile(
+            r'Successfully reconstructed block (?P<blockhash>[0-9a-f]+) with '
+            r'(?P<prefill_count>\d+) txn prefilled, (?P<mempool_count>\d+) '
+            r'txn from mempool \(incl at least (?P<extrapool_count>\d+) from '
+            r'extra pool\) and (?P<requested_count>\d+) txn '
+            r'\((?P<requested_bytes>\d+) bytes\) requested'
+        ),
+        # type_casts={
+            # 'prefilled_txns': int, 'mempool_txns': int, 'extra_pool_txns': int,
+            # 'requested_txns': int, 'requested_bytes': int
+        # }
+    ),
+    LogPattern(
+        reason=ReasonsToCare.CB_RECEIVE,
+        category="cmpctblock",
+        # Initialized PartiallyDownloadedBlock for block 00000000000000000002165564043bef508ec2a8ddf81e15916114cbb5ce632b using a cmpctblock of 14691 bytes
+        regex=re.compile(r'Initialized PartiallyDownloadedBlock for block (?P<blockhash>[0-9a-f]+) using a cmpctblock of (?P<cmpctblock_bytes>\d+) bytes'),
+        # type_casts={'cmpctblock_bytes': int}
+    ),
+    LogPattern(
+        reason=ReasonsToCare.CB_SEND,
+        category="net",
+        # sending cmpctblock (25101 bytes) peer=1
+        regex=re.compile(r'sending cmpctblock \((?P<cmpctblock_bytes>\d+) bytes\) peer=(?P<peer_id>\d+)'),
+        # type_casts={'cmpctblock_bytes': int, 'peer_id': int}
+    ),
+    LogPattern(
+        reason=ReasonsToCare.CB_TO_ANNOUNCE,
+        category="net",
+        # PeerManager::NewPoWValidBlock sending header-and-ids 00000000000000000002165564043bef508ec2a8ddf81e15916114cbb5ce632b to peer=11
+        regex=re.compile(r'PeerManager::NewPoWValidBlock sending header-and-ids (?P<blockhash>[0-9a-f]+) to peer=(?P<peer_id>\d+)'),
+        # type_casts={'peer_id': int}
+    ),
+    LogPattern(
+        reason=ReasonsToCare.CB_REQUESTED,
+        category="net",
+        # received getdata for: cmpctblock 0000000000000000000085ae6fe4bb42bb2395c4fce575eac8f8dcaa8bea0750 peer=3
+        regex=re.compile(r'received getdata for: cmpctblock (?P<blockhash>[0-9a-f]+) peer=(?P<peer_id>\d+)'),
+        # type_casts={'peer_id': int}
+    ),
+    LogPattern(
+        reason=ReasonsToCare.NET_MAX_SEND,
+        category="net",
+        #     - Max send per-rtt: 14480 bytes
+        regex=re.compile(r'\s*- Max send per-rtt: (?P<max_send_bytes>\d+) bytes'), # We're gonna strip it
+        # type_casts={'max_send_bytes': int}
+    ),
+]
+
+
+def we_care(entry: logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[dict]]:
+    entry_category = entry.metadata.category
+    for pattern in LOG_PATTERNS:
+        if entry_category == pattern.category:
+            if match := pattern.regex.match(entry.body):
+                # Get a dictionary of {name: string_value} from the named
+                # groups
+                data = match.groupdict()
+
+                # Apply type conversions for fields specified in the pattern
+                # for field_name, cast_function in pattern.type_casts.items():
+                #    if field_name in data:
+                #        data[field_name] = cast_function(data[field_name])
+
+                return pattern.reason, data
     return ReasonsToCare.WE_DONT, None
 
-@dataclass
-class BlockReceived:
-    cb_size_bytes: int = 0
-    cb_missing_bytes: int = 0
-    cb_missing_tx_count: int = 0
-    # this stat is only set for a node that does prefills
-    cb_bytes_from_extra_pool: Optional[int] = None
 
-@dataclass
-class BlockSent:
-    block_received: BlockReceived
-    peer_id: int
-    cb_bytes_sent: int = 0
-    tcp_window_bytes: int = 0
-    
 def main(filepath):
     blocks_received: dict[str, BlockReceived] = {}
     blocks_sent: dict[str, list[BlockSent]] = defaultdict(list)
     pending_block_send: Optional[BlockSent] = None
     pending_max_send: Optional[BlockSent] = None
-    
+
     for entry in logkicker.process_log_generator(filepath):
         why, match = we_care(entry)
-        if why == ReasonsToCare.WE_DONT or match == None:
+        if why == ReasonsToCare.WE_DONT or match is None:
             continue
         match why:
             case ReasonsToCare.CB_RECEIVE:
-                blocks_received[match.group(1)] = BlockReceived(cb_size_bytes = int(match.group(2)))
+                blocks_received[match['blockhash']] = BlockReceived(cb_size_bytes = int(match['cmpctblock_bytes']))
             case ReasonsToCare.CB_RECONSTRUCTION:
-                block = blocks_received[match.group(1)]
-                block.cb_missing_tx_count = int(match.group(5))
-                block.cb_missing_bytes = int(match.group(6))
+                block = blocks_received[match['blockhash']]
+                block.cb_missing_tx_count = int(match['requested_count'])
+                block.cb_missing_bytes = int(match['requested_bytes'])
             case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED: # lucky, they have the same pattern!
-                blockhash = match.group(1)
+                blockhash = match['blockhash']
                 # On rare occassions we receive full-sized blocks, so we don't know their cb size.
                 if blockhash not in blocks_received:
                     continue
-                pending_block_send = BlockSent(block_received = blocks_received[blockhash], peer_id = int(match.group(2)))
+                pending_block_send = BlockSent(block_received=blocks_received[blockhash], peer_id=int(match['peer_id']))
                 blocks_sent[blockhash].append(pending_block_send)
             case ReasonsToCare.CB_SEND:
                 if not pending_block_send:
                     continue
-                assert pending_block_send.peer_id == int(match.group(2))
-                pending_block_send.cb_bytes_sent = int(match.group(1))
+                assert pending_block_send.peer_id == int(match['peer_id'])
+                pending_block_send.cb_bytes_sent = int(match['cmpctblock_bytes'])
                 pending_max_send = pending_block_send
                 pending_block_send = None
             case ReasonsToCare.NET_MAX_SEND:
                 if not pending_max_send:
                     continue
-                pending_max_send.tcp_window_bytes = int(match.group(1))
+                pending_max_send.tcp_window_bytes = int(match['max_send_bytes'])
                 pending_max_send = None
 
     failed_blocks = [block for block in blocks_received.values() if block.cb_missing_tx_count > 0]
 
     reco_fail_count = len(failed_blocks)
     total_blocks_received = len(blocks_received)
-    print(f"{len(failed_blocks)} out of {len(blocks_received)} blocks received failed reconstruction.") 
+    print(f"{len(failed_blocks)} out of {len(blocks_received)} blocks received failed reconstruction.")
     reco_rate = (total_blocks_received - reco_fail_count) / total_blocks_received * 100
     print(f"Reconstruction rate was {reco_rate:.2f}%")
-        
+
     total_cb_sent = total_prefilled_cb_sent = total_prefill_bytes = 0
     total_available_bytes_in_all_windows = total_available_bytes_in_needed_windows = 0
     prefills_that_fit = 0
     # blocks that exceeded the first rtt window without any prefills
     exceeded_without_prefill = 0
-    
+
     # Pretty print the blocks_sent data
-    for block_hash, sent_list in blocks_sent.items():
-        if block_hash not in blocks_received:
+    for blockhash, sent_list in blocks_sent.items():
+        if blockhash not in blocks_received:
             continue
-        received = blocks_received[block_hash]
+        received = blocks_received[blockhash]
         # the size of the CMPCTBLOCK message we received.
         received_size = received.cb_size_bytes
 
@@ -135,13 +189,13 @@ def main(filepath):
 
             # The number of rtt's it would have taken to announce the
             # CMPCTBLOCK with no additional prefilling
-            rtts_needed_with_no_prefill:int = received_size // sent.tcp_window_bytes
+            rtts_needed_with_no_prefill: int = received_size // sent.tcp_window_bytes
             if (rtts_needed_with_no_prefill > 1):
                 exceeded_without_prefill += 1
             # Bytes used in this window before prefill
             bytes_used_in_tcp_window = received_size % sent.tcp_window_bytes
             # The number of bytes of overhead we have up to the next tcp window boundary
-            bytes_left_in_tcp_window:int = sent.tcp_window_bytes - bytes_used_in_tcp_window
+            bytes_left_in_tcp_window: int = sent.tcp_window_bytes - bytes_used_in_tcp_window
 
             # running total of tcp windows for stats
             total_available_bytes_in_all_windows += bytes_left_in_tcp_window
@@ -178,11 +232,12 @@ def main(filepath):
         print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks sent required prefills. ({prefill_needed_rate * 100:.2f}%)")
         print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
 
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:
         print("Usage: python script.py <filepath>")
         sys.exit(1)
-    
+
     filepath = sys.argv[1]
     entries = main(filepath)
