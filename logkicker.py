@@ -96,7 +96,6 @@ class LogEntry:
         loglevel: Optional[str] = None
         wallet_name: Optional[str] = None
 
-
     metadata: Metadata
     body: str
     # a dict containing the parsed variables of the log message.
@@ -108,7 +107,7 @@ class LogEntry:
     def __init__(self, line):
         self.process_line_metadata(line)
         # self.print_metadata()
-    
+
     # The whole burger's here, this is needed in order to split the body from
     # metadata.
     # todo: don't process all metadata up-front, we need more granular ways to
@@ -152,7 +151,7 @@ class LogEntry:
 
         category = logcategory_match.group(1) 
         loglevel = logcategory_match.group(2)  # Will be None if no :loglevel part
-            
+
         for metadatum in matches:
             if metadatum in THREADNAME_STRINGS:
                 thread = metadatum
@@ -175,8 +174,8 @@ class LogEntry:
             function=function,
             loglevel=loglevel,
             wallet_name=wallet_name
-        )        
-    
+        )
+
     def print_metadata(self):
         if(self.metadata.thread):
             print(f"Thread: {self.metadata.thread}")
@@ -188,7 +187,7 @@ class LogEntry:
             print(f"Function: {self.metadata.function}")
         if(self.metadata.wallet_name):
             print(f"Wallet name: {self.metadata.wallet_name}")
-        print(f"Body: {self.body}") 
+        print(f"Body: {self.body}")
 
 def process_log_generator(
     filepath: str, 
