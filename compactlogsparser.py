@@ -7,10 +7,13 @@ from enum import Enum
 import re
 from typing import Optional, Tuple
 import logkicker
+import datetime
 
 
 @dataclass
 class BlockReceived:
+    time_received: datetime.datetime = datetime.datetime.now()
+    time_reconstructed: datetime.datetime = datetime.datetime.now()
     cb_size_bytes: int = 0
     cb_missing_bytes: int = 0
     cb_missing_tx_count: int = 0
@@ -21,6 +24,7 @@ class BlockReceived:
 class BlockSent:
     block_received: BlockReceived
     peer_id: int
+    time_sent: datetime.datetime = datetime.datetime.now()
     cb_bytes_sent: int = 0
     tcp_window_bytes: int = 0
 
@@ -103,72 +107,82 @@ LOG_PATTERNS = [
 ]
 
 
-def we_care(entry: logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[dict]]:
+def we_care(entry: logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[logkicker.LogEntry]]:
     entry_category = entry.metadata.category
     for pattern in LOG_PATTERNS:
         if entry_category == pattern.category:
             if match := pattern.regex.match(entry.body):
                 # Get a dictionary of {name: string_value} from the named
                 # groups
-                data = match.groupdict()
+                entry.data = match.groupdict()
 
                 # Apply type conversions for fields specified in the pattern
                 # for field_name, cast_function in pattern.type_casts.items():
                 #    if field_name in data:
                 #        data[field_name] = cast_function(data[field_name])
 
-                return pattern.reason, data
+                return pattern.reason, entry
     return ReasonsToCare.WE_DONT, None
 
-
-def main(filepath):
+def parse_cb_log(filepath: str) -> Tuple[dict[str, BlockReceived], dict[str, list[BlockSent]]]:
     blocks_received: dict[str, BlockReceived] = {}
     blocks_sent: dict[str, list[BlockSent]] = defaultdict(list)
     pending_block_send: Optional[BlockSent] = None
     pending_max_send: Optional[BlockSent] = None
 
     for entry in logkicker.process_log_generator(filepath):
-        why, match = we_care(entry)
-        if why == ReasonsToCare.WE_DONT or match is None:
+        why, what = we_care(entry)
+        if why == ReasonsToCare.WE_DONT or what is None:
             continue
         match why:
             case ReasonsToCare.CB_RECEIVE:
-                blocks_received[match['blockhash']] = BlockReceived(cb_size_bytes = int(match['cmpctblock_bytes']))
+                blocks_received[what.data['blockhash']] = BlockReceived(time_received=what.time(), cb_size_bytes=int(what.data['cmpctblock_bytes']))
             case ReasonsToCare.CB_RECONSTRUCTION:
-                block = blocks_received[match['blockhash']]
-                block.cb_missing_tx_count = int(match['requested_count'])
-                block.cb_missing_bytes = int(match['requested_bytes'])
+                block = blocks_received[what.data['blockhash']]
+                block.cb_missing_tx_count = int(what.data['requested_count'])
+                block.cb_missing_bytes = int(what.data['requested_bytes'])
+                block.time_reconstructed = what.time()
             case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED: # lucky, they have the same pattern!
-                blockhash = match['blockhash']
+                blockhash = what.data['blockhash']
                 # On rare occassions we receive full-sized blocks, so we don't know their cb size.
                 if blockhash not in blocks_received:
                     continue
-                pending_block_send = BlockSent(block_received=blocks_received[blockhash], peer_id=int(match['peer_id']))
+                pending_block_send = BlockSent(block_received=blocks_received[blockhash], peer_id=int(what.data['peer_id']))
                 blocks_sent[blockhash].append(pending_block_send)
             case ReasonsToCare.CB_SEND:
                 if not pending_block_send:
                     continue
-                assert pending_block_send.peer_id == int(match['peer_id'])
-                pending_block_send.cb_bytes_sent = int(match['cmpctblock_bytes'])
+                assert pending_block_send.peer_id == int(what.data['peer_id'])
+                pending_block_send.cb_bytes_sent = int(what.data['cmpctblock_bytes'])
+                pending_block_send.time_sent = what.time()
                 pending_max_send = pending_block_send
                 pending_block_send = None
             case ReasonsToCare.NET_MAX_SEND:
                 if not pending_max_send:
                     continue
-                pending_max_send.tcp_window_bytes = int(match['max_send_bytes'])
+                pending_max_send.tcp_window_bytes = int(what.data['max_send_bytes'])
                 pending_max_send = None
+    return blocks_received, blocks_sent
 
-    failed_blocks = [block for block in blocks_received.values() if block.cb_missing_tx_count > 0]
 
-    reco_fail_count = len(failed_blocks)
-    total_blocks_received = len(blocks_received)
-    print(f"{len(failed_blocks)} out of {len(blocks_received)} blocks received failed reconstruction.")
-    reco_rate = (total_blocks_received - reco_fail_count) / total_blocks_received * 100
-    print(f"Reconstruction rate was {reco_rate:.2f}%")
 
-    total_cb_sent = total_prefilled_cb_sent = total_prefill_bytes = 0
+def main(filepath):
+    blocks_received, blocks_sent = parse_cb_log(filepath)
+
+    blocks_failing_reconstruction = [block for block in blocks_received.values() if block.cb_missing_tx_count > 0]
+
+    print(f"{len(blocks_failing_reconstruction)} out of {len(blocks_received)} blocks received failed reconstruction.")
+    fail_rate = len(blocks_failing_reconstruction) / len(blocks_received)
+    reco_rate = 1 - fail_rate
+    print(f"Reconstruction rate was {reco_rate * 100:.2f}%")
+
+    total_cb_sent = total_prefilled_cb_sent = 0
+    total_prefill_bytes = total_prefill_extra_bytes = 0
     total_available_bytes_in_all_windows = total_available_bytes_in_needed_windows = 0
+    # blocks where the whole prefill fit
     prefills_that_fit = 0
+    # blocks where the prefill without extra_txn fit
+    no_extra_prefills_that_fit = 0
     # blocks that exceeded the first rtt window without any prefills
     exceeded_without_prefill = 0
 
@@ -212,6 +226,10 @@ def main(filepath):
                 # between sent size, todo: add logging to the branch
                 # track the total number of cb's that needed prefills
                 received.cb_bytes_from_extra_pool = sent.cb_bytes_sent - received_size - received.cb_missing_bytes
+                total_prefill_extra_bytes += received.cb_bytes_from_extra_pool
+                if prefill_size - received.cb_bytes_from_extra_pool <= bytes_left_in_tcp_window:
+                    # We probably win a reconstruction here, but more data is needed.
+                    no_extra_prefills_that_fit += 1
 
     sent_per_block = total_cb_sent / len(blocks_received)
     print(f"{total_cb_sent} CMPCTBLOCK messages sent, {sent_per_block:.2f} per block.")
@@ -222,15 +240,23 @@ def main(filepath):
     avg_available_bytes = total_available_bytes_in_all_windows / total_cb_sent
     print(f"Avg available prefill bytes for all CMPCTBLOCK's we sent: {avg_available_bytes:.2f}")
     if total_prefill_bytes > 0:
-        avg_prefill_bytes = total_prefill_bytes / total_prefilled_cb_sent
         avg_available_bytes_for_needed = total_available_bytes_in_needed_windows / total_cb_sent
         print(f"Avg available prefill bytes for prefilled CMPCTBLOCK's we sent: {avg_available_bytes_for_needed:.2f}")
 
+        avg_prefill_bytes = total_prefill_bytes / total_prefilled_cb_sent
+        print(f"Avg total prefill size for CMPCTBLOCK's we prefilled: {avg_prefill_bytes:.2f}")
+
+        avg_extra_prefill_bytes = total_prefill_extra_bytes / total_prefilled_cb_sent
+        print(f"Avg bytes of prefill that were extra_txn: {avg_extra_prefill_bytes:.2f}")
+
+        avg_prefill_without_extra = (total_prefill_bytes - total_prefill_extra_bytes) / total_prefilled_cb_sent
+        print(f"Avg prefill size w/o extras: {avg_prefill_without_extra:.2f}")
+
         prefill_needed_rate = total_prefilled_cb_sent / total_cb_sent
         prefill_fit_rate = prefills_that_fit / total_prefilled_cb_sent
-        print(f"Avg prefill size for CMPCTBLOCK's we prefilled: {avg_prefill_bytes:.2f}")
         print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks sent required prefills. ({prefill_needed_rate * 100:.2f}%)")
         print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
+        print(f"{no_extra_prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks would have fit if we hadn't prefilled extra txn's. ({no_extra_prefills_that_fit / total_prefilled_cb_sent * 100:.2f}%)")
 
 
 if __name__ == "__main__":

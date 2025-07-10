@@ -99,6 +99,8 @@ class LogEntry:
 
     metadata: Metadata
     body: str
+    # a dict containing the parsed variables of the log message.
+    data: dict
 
     def time(self):
         return dateutil.parser.parse(self.metadata.time_str)
