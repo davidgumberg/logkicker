@@ -287,9 +287,13 @@ def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
 
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xslx'):
-    # Save the sent DataFrame to xslx (it's basically a join table with receive)
+    # sadly necessary to strip TZ from datetime fields:
+    for df in [received, sent]:
+        dt_cols = df.select_dtypes(include=['datetime64[ns, UTC]']).columns
+        for col in dt_cols:
+                df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
-    with pd.ExcelWriter('multiple_dataframes.xlsx', options = {'remove_timezone': True}) as writer:
+    with pd.ExcelWriter(filename, engine='xslxwriter') as writer:
         sent.to_excel(writer, sheet_name='sent', index=False)
         received.to_excel(writer, sheet_name='received', index=False)
     print(f"Data saved to {filename}")
@@ -319,15 +323,16 @@ def main():
         output_excel(blocks_received, blocks_sent, args.output)
 
     elif args.command == 'stats':
-        read = pd.read_excel(args.xlsxfile)
+        received = pd.read_excel(args.xlsxfile, sheet_name='received')
+        sent = pd.read_excel(args.xlsxfile, sheet_name='sent')
 
-        received_df = read['received']
-        sent_df = read['sent']
-        compute_stats(received_df, sent_df)
+        compute_stats(received, sent)
 
     elif args.command == 'plot':
-        sent_df = pd.read_excel(args.xlsxfile)
-        make_plots(sent_df)
+        received = pd.read_excel(args.xlsxfile, sheet_name='received')
+        sent = pd.read_excel(args.xlsxfile, sheet_name='sent')
+
+        make_plots(received_df, sent_df)
 
     else:
         parser.print_usage()
