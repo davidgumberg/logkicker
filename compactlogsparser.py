@@ -288,14 +288,14 @@ def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
     # Additional plots can be added here, e.g., reconstruction failure rate over time or other distributions
 
 
-def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xslx'):
+def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
     # sadly necessary to strip TZ from datetime fields:
     for df in [received, sent]:
         dt_cols = df.select_dtypes(include=['datetime64[ns, UTC]']).columns
         for col in dt_cols:
                 df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
-    with pd.ExcelWriter(filename, engine='xslxwriter') as writer:
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
         sent.to_excel(writer, sheet_name='sent')
         received.to_excel(writer, sheet_name='received')
     print(f"Data saved to {filename}")
@@ -308,15 +308,15 @@ def main():
     # Parse command
     parse_command = command_parser.add_parser('parse', help='Parse a log file into a Libreoffice Calc file.')
     parse_command.add_argument('logfile', help='Path to the log file.')
-    parse_command.add_argument('output', nargs='?', default='cb_data_output.xslx', help='Output Calc file path.')
+    parse_command.add_argument('output', nargs='?', default='compactblocksdata.xlsx', help='Output Calc file path.')
 
     # Stats command
-    stats_command = command_parser.add_parser('stats', help='Compute and print statistics from an xslx.')
-    stats_command.add_argument('excelfile', help='Path to the xslx file.')
+    stats_command = command_parser.add_parser('stats', help='Compute and print statistics from an xlsx.')
+    stats_command.add_argument('excelfile', help='Path to the xlsx file.')
 
     # Plot command
-    plot_command = command_parser.add_parser('plot', help='Generate plots from a xslx.')
-    plot_command.add_argument('excelfile', help='Path to the xslx file.')
+    plot_command = command_parser.add_parser('plot', help='Generate plots from a xlsx.')
+    plot_command.add_argument('excelfile', help='Path to the xlsx file.')
 
     args = parser.parse_args()
 
