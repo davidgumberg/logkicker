@@ -294,8 +294,8 @@ def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactbl
                 df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
     with pd.ExcelWriter(filename, engine='xslxwriter') as writer:
-        sent.to_excel(writer, sheet_name='sent', index=False)
-        received.to_excel(writer, sheet_name='received', index=False)
+        sent.to_excel(writer, sheet_name='sent')
+        received.to_excel(writer, sheet_name='received')
     print(f"Data saved to {filename}")
 
 
