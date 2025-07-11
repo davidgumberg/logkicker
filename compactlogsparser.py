@@ -120,7 +120,6 @@ class BlockReceived:
     received_size: int = 0
     bytes_missing: int = 0
     received_tx_missing: int = 0
-    extra_pool_prefill_size: Optional[int] = None
 
 
 @dataclass
@@ -289,13 +288,13 @@ def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
 
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
-    # sadly necessary to strip TZ from datetime fields:
-    for df in [received, sent]:
-        dt_cols = df.select_dtypes(include=['datetime64[ns, UTC]']).columns
-        for col in dt_cols:
-                df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
-    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(
+        filename,
+        engine='xlsxwriter',
+        # necessary to strip TZ from datetime fields.
+        engine_kwargs={"options": {"remove_timezone": True}}
+    ) as writer:
         sent.to_excel(writer, sheet_name='sent')
         received.to_excel(writer, sheet_name='received')
     print(f"Data saved to {filename}")
