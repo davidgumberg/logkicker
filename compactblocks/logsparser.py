@@ -7,13 +7,12 @@ import seaborn as sns
 
 import argparse
 from collections import defaultdict
-import pprint
 from dataclasses import dataclass
 from enum import Enum
 import re
-import sys
 from typing import Optional, Tuple
-import logkicker
+from compactblocks.stats import received_stats, sent_extra_txn_stats, sent_stats, sent_already_over_stats
+import logkicker.logkicker as logkicker
 import datetime
 
 
@@ -215,53 +214,11 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
 
     return received_df, sent_df
 
-
 def compute_stats(received: pd.DataFrame, sent: pd.DataFrame) -> None:
-    # Reconstruction stats
-    total_cb_received = len(received)
-    if total_cb_received == 0:
-        return
-    failed_blocks = (received['received_tx_missing'] > 0).sum()
-    fail_rate = failed_blocks / total_cb_received
-    reco_rate = 1 - fail_rate
-    print(f"{failed_blocks} out of {total_cb_received} blocks received failed reconstruction.")
-    print(f"Reconstruction rate was {reco_rate * 100:.2f}%")
-
-    # Sending stats
-    total_cb_sent = len(sent)
-    sent_per_block = total_cb_sent / total_cb_received if total_cb_received > 0 else 0
-    exceeded_without_prefill = (sent['rtts_without_prefill'] > 1).sum()
-    already_over_rtt_rate = exceeded_without_prefill / total_cb_sent if total_cb_sent > 0 else 0
-
-    avg_available_bytes_all = sent['window_bytes_available'].mean()
-
-    prefilled_sends = sent[sent['prefill_size'] > 0]
-    total_prefilled_cb_sent = len(prefilled_sends)
-    if total_prefilled_cb_sent == 0:
-        return
-    print(f"{total_cb_sent} CMPCTBLOCK messages sent, {sent_per_block:.2f} per block.")
-    print(f"{exceeded_without_prefill}/{total_cb_sent} CMPCTBLOCK's sent were already over the window for a single RTT before prefilling. ({already_over_rtt_rate * 100:.2f}%)")
-    print(f"Avg available prefill bytes for all CMPCTBLOCK's we sent: {avg_available_bytes_all:.2f}")
-
-    avg_prefill_bytes = prefilled_sends['prefill_size'].mean()
-    avg_extra_prefill_bytes = prefilled_sends['extra_pool_prefill_size'].mean()
-    avg_prefill_without_extra = (prefilled_sends['prefill_size'] - prefilled_sends['extra_pool_prefill_size']).mean()
-    prefills_that_fit = (prefilled_sends['prefill_size'] <= prefilled_sends['window_bytes_available']).sum()
-    prefill_fit_rate = prefills_that_fit / total_prefilled_cb_sent
-    no_extra_prefills_that_fit_count = ((prefilled_sends['prefill_size'] - prefilled_sends['extra_pool_prefill_size']) <= prefilled_sends['window_bytes_available']).sum()
-    no_extra_prefills_that_fit_rate = no_extra_prefills_that_fit_count / total_prefilled_cb_sent
-    total_available_bytes_in_needed_windows = prefilled_sends['window_bytes_available'].sum()
-    avg_available_bytes_for_needed = total_available_bytes_in_needed_windows / total_prefilled_cb_sent
-    prefill_needed_rate = total_prefilled_cb_sent / total_cb_sent
-
-    print(f"Avg available prefill bytes for prefilled CMPCTBLOCK's we sent: {avg_available_bytes_for_needed:.2f}")
-    print(f"Avg total prefill size for CMPCTBLOCK's we prefilled: {avg_prefill_bytes:.2f}")
-    print(f"Avg bytes of prefill that were extra_txn: {avg_extra_prefill_bytes:.2f}")
-    print(f"Avg prefill size w/o extras: {avg_prefill_without_extra:.2f}")
-    print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks sent required prefills. ({prefill_needed_rate * 100:.2f}%)")
-    print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
-    print(f"{no_extra_prefills_that_fit_count}/{total_prefilled_cb_sent} prefilled blocks would have fit if we hadn't prefilled extra txn's. ({no_extra_prefills_that_fit_rate * 100:.2f}%)")
-
+    received_stats(received)
+    sent_stats(sent)
+    sent_extra_txn_stats(sent)
+    sent_already_over_stats(sent)
 
 def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
     # Filter for prefilled sends for plotting
@@ -285,7 +242,6 @@ def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
     plt.show()
 
     # Additional plots can be added here, e.g., reconstruction failure rate over time or other distributions
-
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
     # Write both dataframes to one Excel file
