@@ -1,0 +1,4 @@
+pyparsing
+seaborn
+xlsxwriter
+
