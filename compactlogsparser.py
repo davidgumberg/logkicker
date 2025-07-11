@@ -179,7 +179,8 @@ def parse_cb_log(
 def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: dict[str, list[BlockSent]]):
     # Create DataFrame for received blocks
     received_df = pd.DataFrame.from_dict(blocks_received, orient='index')
-    received_df.rename_axis("blockhash")
+    # The dict key is the blockhash.
+    received_df = received_df.rename_axis("blockhash")
 
     # Create DataFrame for sent blocks, including data from received blocks
     sent_data = []
@@ -200,6 +201,7 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
             }
             sent_data.append(sent_dict)
     sent_df = pd.DataFrame(sent_data)
+    sent_df = sent_df.set_index('blockhash')
 
     # Add derived columns
     sent_df['prefill_size'] = sent_df['send_size'] - sent_df['received_size']
@@ -332,7 +334,7 @@ def main():
         received = pd.read_excel(args.xlsxfile, sheet_name='received')
         sent = pd.read_excel(args.xlsxfile, sheet_name='sent')
 
-        make_plots(received_df, sent_df)
+        make_plots(received, sent)
 
     else:
         parser.print_usage()
