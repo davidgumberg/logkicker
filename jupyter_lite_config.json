@@ -4,6 +4,6 @@
     "output_dir": "dist"
   },
   "PipliteAddon": {
-    "piplite_urls": ["./dist/wheels"]
+    "piplite_urls": ["/tmp/wheels"]
   }
 }
