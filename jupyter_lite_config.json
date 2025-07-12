@@ -1,0 +1,9 @@
+{
+  "LiteBuildConfig": {
+    "contents": ["compactblocks"],
+    "output_dir": "dist"
+  },
+  "PipliteAddon": {
+    "piplite_urls": ["./dist/logkicker-0.0.0.0.0.0.0.0.0.0.1-py3-none-any.whl"]
+  }
+}

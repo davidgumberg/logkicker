@@ -3,10 +3,7 @@ name = "logkicker"
 version = "0.0.0.0.0.0.0.0.0.0.1"
 
 dependencies = [
-    "jupyterlite-core",
-    "jupyterlite-pyodide-kernel",
-    "jupyterlab",
-    "notebook",
+    "pandas",
     "ipympl",
     "pyparsing",
     "seaborn",

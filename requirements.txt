@@ -10,7 +10,3 @@ jupyterlab-spreadsheet-editor
 
 # Python: interative Matplotlib library for Jupyter notebooks (optional)
 ipympl>=0.8.2
-mplcursors
-seaborn
-
--e ./
