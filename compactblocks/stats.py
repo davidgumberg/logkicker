@@ -11,6 +11,16 @@ def received_stats(received: pd.DataFrame) -> None:
     reco_rate = 1 - fail_rate
     print(f"Reconstruction rate was {reco_rate * 100:.2f}%")
 
+    avg_received_size = received['received_size'].mean()
+    print(f"Avg size of received block: {avg_received_size:.2f}")
+
+    avg_missing_tx_size = received['bytes_missing'].mean()
+    print(f"Avg bytes missing from received blocks: {avg_missing_tx_size:.2f}")
+
+    avg_reco_time = (received['time_reconstructed'] - received['time_received']).mean()
+    avg_reco_time_in_ms = avg_reco_time.value / (1000 * 1000)
+    print(f"Avg reconstruction time: {avg_reco_time_in_ms}ms")
+
 # SENT CMPCTBLOCK stats
 def sent_stats(sent: pd.DataFrame) -> None:
     total_cb_sent = len(sent)
@@ -20,7 +30,7 @@ def sent_stats(sent: pd.DataFrame) -> None:
     prefilled_sends = sent[sent['prefill_size'] > 0]
     total_prefilled_cb_sent = len(prefilled_sends)
     prefill_needed_rate = total_prefilled_cb_sent / total_cb_sent
-    print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks were sent with prefills:. ({prefill_needed_rate * 100:.2f}%)")
+    print(f"{total_prefilled_cb_sent}/{total_cb_sent} blocks were sent with prefills. ({prefill_needed_rate * 100:.2f}%)")
     print(f"Avg available prefill bytes for all CMPCTBLOCK's we sent: {avg_available_bytes_all:.2f}")
 
     # At this point, we return if this is not a prefilling node. 

@@ -124,18 +124,19 @@ def we_care(entry: logkicker.LogEntry) -> Tuple[ReasonsToCare, Optional[logkicke
 
 @dataclass
 class BlockReceived:
-    time_received: datetime.datetime = datetime.datetime.now()
-    time_reconstructed: datetime.datetime = datetime.datetime.now()
+    time_received: Optional[datetime.datetime] = None
+    time_reconstructed: Optional[datetime.datetime] = None
     received_size: int = 0
     bytes_missing: int = 0
     received_tx_missing: int = 0
+    reconstruction_time_ns: float = 0.0
 
 
 @dataclass
 class BlockSent:
     block_received: BlockReceived
     peer_id: int
-    time_sent: datetime.datetime = datetime.datetime.now()
+    time_sent: Optional[datetime.datetime] = None
     send_size: int = 0
     tcp_window_size: int = 0
 
@@ -148,6 +149,7 @@ def parse_cb_log(
     blocks_sent: dict[str, list[BlockSent]] = defaultdict(list)
     pending_block_send: Optional[BlockSent] = None
     pending_max_send: Optional[BlockSent] = None
+    hash_pending_reconstruction: Optional[str] = None
 
     for entry in logkicker.process_log_generator(filepath):
         why, what = we_care(entry)
@@ -155,12 +157,29 @@ def parse_cb_log(
             continue
         match why:
             case ReasonsToCare.CB_RECEIVE:
+                if hash_pending_reconstruction is not None:
+                    # handle the case where the last block we received never
+                    # got reconstructed, that means it was either orphaned
+                    # before reconstruction, or we got it via old-school BLOCK
+                    # message, so we're going to delete it.
+                    del blocks_received[hash_pending_reconstruction]
+                    
+                hash_pending_reconstruction = what.data['blockhash']
                 blocks_received[what.data['blockhash']] = BlockReceived(time_received=what.time(), received_size=int(what.data['cmpctblock_bytes']))
             case ReasonsToCare.CB_RECONSTRUCTION:
+                if hash_pending_reconstruction != what.data['blockhash']:
+                    # Reconstructing a block we never heard about it, or the
+                    # wrong block, shouldn't happen, maybe in a re-org? Let's
+                    # just skip it.
+                    print(f"Warning: Message found reconstructing block {what.data['blockhash']}, which we didn't expect.")
+                    continue
                 block = blocks_received[what.data['blockhash']]
                 block.received_tx_missing = int(what.data['requested_count'])
                 block.bytes_missing = int(what.data['requested_bytes'])
                 block.time_reconstructed = what.time()
+
+                # Nothing is pending now
+                hash_pending_reconstruction = None
             case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED: # lucky, they have the same pattern!
                 blockhash = what.data['blockhash']
                 # On rare occassions we receive full-sized blocks, so we don't know their cb size.
@@ -181,6 +200,7 @@ def parse_cb_log(
                     continue
                 pending_max_send.tcp_window_size = int(what.data['max_send_bytes'])
                 pending_max_send = None
+
     return blocks_received, blocks_sent
 
 
@@ -189,6 +209,9 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
     received_df = pd.DataFrame.from_dict(blocks_received, orient='index')
     # The dict key is the blockhash.
     received_df = received_df.rename_axis("blockhash")
+
+    # Add derived columns for received
+    received_df['reconstruction_time_ns'] = (received_df['time_reconstructed'] - received_df['time_received']).astype('int64')
 
     # Create DataFrame for sent blocks, including data from received blocks
     sent_data = []
@@ -211,7 +234,7 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
     sent_df = pd.DataFrame(sent_data)
     sent_df = sent_df.set_index('blockhash')
 
-    # Add derived columns
+    # Add derived columns for sent
     sent_df['prefill_size'] = sent_df['send_size'] - sent_df['received_size']
     sent_df['window_bytes_used'] = sent_df['received_size'] % sent_df['tcp_window_size']
     sent_df['window_bytes_available'] = sent_df['tcp_window_size'] - sent_df['window_bytes_used']
@@ -235,6 +258,11 @@ def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
     mpl.rcParams['font.family'] = 'serif'
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
+    # sadly necessary to strip TZ from datetime fields:
+    for df in [received, sent]:
+        dt_cols = df.select_dtypes(include=['datetime64[ns, UTC]']).columns
+        for col in dt_cols:
+                df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
     with pd.ExcelWriter(
         filename,
@@ -242,7 +270,7 @@ def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactbl
         # necessary to strip TZ from datetime fields.
         engine_kwargs={"options": {"remove_timezone": True}}
     ) as writer:
-        sent.to_excel(writer, sheet_name='sent')
+        sent.to_excel(writer, sheet_name='sent',)
         received.to_excel(writer, sheet_name='received')
     print(f"Data saved to {filename}")
 
@@ -258,7 +286,7 @@ def main():
 
     # Stats command
     stats_command = command_parser.add_parser('stats', help='Compute and print statistics from an xlsx.')
-    stats_command.add_argument('excelfile', help='Path to the xlsx file.')
+    stats_command.add_argument('xlsxfile', help='Path to the xlsx file.')
 
     # Plot command
     plot_command = command_parser.add_parser('plot', help='Generate plots from a xlsx.')
