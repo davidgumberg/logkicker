@@ -13,4 +13,4 @@ ipympl>=0.8.2
 mplcursors
 seaborn
 
-./
+-e ./
