@@ -24,7 +24,7 @@ jobs:
       - name: Build logkicker
         run: |
           python -m pip install build
-          python -m build --wheel
+          python -m build --wheel --outdir dist/wheels
       - name: Build the JupyterLite site
         run: |
           jupyter lite build
