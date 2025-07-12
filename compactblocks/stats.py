@@ -37,24 +37,6 @@ def sent_stats(sent: pd.DataFrame) -> None:
 
     print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
 
-# vExtraTxnForCompact stats
-def sent_extra_txn_stats(sent: pd.DataFrame) -> None:
-    prefilled_sends = sent[sent['prefill_size'] > 0]
-    total_prefilled_cb_sent = len(prefilled_sends)
-    # At this point, we return if this is not a prefilling node. 
-    if total_prefilled_cb_sent == 0:
-        return
-
-    avg_prefill_bytes = prefilled_sends['prefill_size'].mean()
-    avg_extra_prefill_bytes = prefilled_sends['extra_pool_prefill_size'].mean()
-    avg_prefill_without_extra = avg_prefill_bytes - avg_extra_prefill_bytes
-    print(f"Avg bytes of prefill that were from vExtraTxn: {avg_extra_prefill_bytes:.2f}")
-    print(f"Avg prefill size w/o vExtraTxn's: {avg_prefill_without_extra:.2f}")
-    
-    no_extra_prefills_that_fit_count = ((prefilled_sends['prefill_size'] - prefilled_sends['extra_pool_prefill_size']) <= prefilled_sends['window_bytes_available']).sum()
-    no_extra_prefills_that_fit_rate = no_extra_prefills_that_fit_count / total_prefilled_cb_sent
-    print(f"{no_extra_prefills_that_fit_count}/{total_prefilled_cb_sent} prefilled blocks would have fit if we hadn't prefilled extra txn's. ({no_extra_prefills_that_fit_rate * 100:.2f}%)")
-
 def sent_already_over_stats(sent: pd.DataFrame) -> None:
     total_cb_sent = len(sent)
 

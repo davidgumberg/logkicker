@@ -2,7 +2,17 @@
 
 import pandas as pd
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+import matplotlib.pyplot as plt
+plt.ion()
+import mplcursors
+
+import pandas as pd
+pd.options.mode.copy_on_write = True 
+
 import seaborn as sns
 
 import argparse
@@ -11,7 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 import re
 from typing import Optional, Tuple
-from compactblocks.stats import received_stats, sent_extra_txn_stats, sent_stats, sent_already_over_stats
+from compactblocks.stats import received_stats, sent_stats, sent_already_over_stats
 import logkicker.logkicker as logkicker
 import datetime
 
@@ -203,11 +213,6 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
 
     # Add derived columns
     sent_df['prefill_size'] = sent_df['send_size'] - sent_df['received_size']
-    # this only works for the prefilling node. extra pool recovery size
-    # is not logged, but we can recover this info from the difference
-    # between sent size, todo: add logging to the branch
-    # track the total number of cb's that needed prefills
-    sent_df['extra_pool_prefill_size'] = np.where(sent_df['prefill_size'] > 0, sent_df['prefill_size'] - sent_df['received_bytes_missing'], 0)
     sent_df['window_bytes_used'] = sent_df['received_size'] % sent_df['tcp_window_size']
     sent_df['window_bytes_available'] = sent_df['tcp_window_size'] - sent_df['window_bytes_used']
     sent_df['rtts_without_prefill'] = (sent_df['received_size'] // sent_df['tcp_window_size']).astype(int)
@@ -217,31 +222,17 @@ def create_dataframes(blocks_received: dict[str, BlockReceived], blocks_sent: di
 def compute_stats(received: pd.DataFrame, sent: pd.DataFrame) -> None:
     received_stats(received)
     sent_stats(sent)
-    sent_extra_txn_stats(sent)
     sent_already_over_stats(sent)
 
 def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
-    # Filter for prefilled sends for plotting
-    prefilled_sends = sent[sent['prefill_size'] > 0]
-
-    # Plot 1: Histogram of prefill sizes for prefilled blocks
-    plt.figure(figsize=(10, 6))
-    sns.histplot(prefilled_sends['prefill_size'], bins=50, kde=True)
-    plt.title('Histogram of Prefill Sizes for Prefilled Blocks')
-    plt.xlabel('Prefill Size (bytes)')
-    plt.ylabel('Frequency')
-    plt.show()
-
-    # Plot 2: Scatter plot of compact block size vs TCP window size, colored by prefill status
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=sent, x='received_size', y='tcp_window_size', hue=(sent['prefill_size'] > 0))
-    plt.title('Compact Block Size vs TCP Window Size')
-    plt.xlabel('Compact Block Size (bytes)')
-    plt.ylabel('TCP Window Size (bytes)')
-    plt.legend(title='Prefill Needed')
-    plt.show()
-
-    # Additional plots can be added here, e.g., reconstruction failure rate over time or other distributions
+    font = {
+        'family': 'serif',
+        'color':  '#02082e',
+        'weight': 'normal',
+        'size': 12,
+    }
+    mpl.rcParams['font.weight'] = 'normal'
+    mpl.rcParams['font.family'] = 'serif'
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
     # Write both dataframes to one Excel file
@@ -271,7 +262,7 @@ def main():
 
     # Plot command
     plot_command = command_parser.add_parser('plot', help='Generate plots from a xlsx.')
-    plot_command.add_argument('excelfile', help='Path to the xlsx file.')
+    plot_command.add_argument('xlsxfile', help='Path to the xlsx file.')
 
     args = parser.parse_args()
 
