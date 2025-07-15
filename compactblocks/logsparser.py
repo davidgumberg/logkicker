@@ -1,29 +1,20 @@
 #!/usr/bin/env python3
 
-import pandas as pd
-import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-import matplotlib.pyplot as plt
-plt.ion()
-import mplcursors
-
-import pandas as pd
-pd.options.mode.copy_on_write = True 
-
-import seaborn as sns
-
 import argparse
 from collections import defaultdict
 from dataclasses import dataclass
+import datetime
 from enum import Enum
+import matplotlib.pyplot as plt
+import pandas as pd
 import re
 from typing import Optional, Tuple
+
+from compactblocks.plots import plot_prefill_distributions, plot_received_size, plot_reconstruction_histogram_and_scatterplot, plot_tcp_window_histogram
 from compactblocks.stats import received_stats, sent_stats, sent_already_over_stats
 import logkicker.logkicker as logkicker
-import datetime
+
+pd.options.mode.copy_on_write = True
 
 
 class ReasonsToCare(Enum):
@@ -163,7 +154,7 @@ def parse_cb_log(
                     # before reconstruction, or we got it via old-school BLOCK
                     # message, so we're going to delete it.
                     del blocks_received[hash_pending_reconstruction]
-                    
+
                 hash_pending_reconstruction = what.data['blockhash']
                 blocks_received[what.data['blockhash']] = BlockReceived(time_received=what.time(), received_size=int(what.data['cmpctblock_bytes']))
             case ReasonsToCare.CB_RECONSTRUCTION:
@@ -180,7 +171,7 @@ def parse_cb_log(
 
                 # Nothing is pending now
                 hash_pending_reconstruction = None
-            case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED: # lucky, they have the same pattern!
+            case ReasonsToCare.CB_TO_ANNOUNCE | ReasonsToCare.CB_REQUESTED:  # lucky, they have the same pattern!
                 blockhash = what.data['blockhash']
                 # On rare occassions we receive full-sized blocks, so we don't know their cb size.
                 if blockhash not in blocks_received:
@@ -247,22 +238,21 @@ def compute_stats(received: pd.DataFrame, sent: pd.DataFrame) -> None:
     sent_stats(sent)
     sent_already_over_stats(sent)
 
-def make_plots(received: pd.DataFrame, sent: pd.DataFrame):
-    font = {
-        'family': 'serif',
-        'color':  '#02082e',
-        'weight': 'normal',
-        'size': 12,
-    }
-    mpl.rcParams['font.weight'] = 'normal'
-    mpl.rcParams['font.family'] = 'serif'
+
+def make_plots(received: pd.DataFrame, sent: pd.DataFrame, filename: str):
+    plot_received_size(received)
+    plot_reconstruction_histogram_and_scatterplot(received, filename)
+    plot_tcp_window_histogram(sent)
+    plot_prefill_distributions(sent)
+    plt.show()
+
 
 def output_excel(received: pd.DataFrame, sent: pd.DataFrame, filename='compactblocksdata.xlsx'):
-    # sadly necessary to strip TZ from datetime fields:
+    # sadly necessary to strip TZ from datetime fields in two ways:
     for df in [received, sent]:
         dt_cols = df.select_dtypes(include=['datetime64[ns, UTC]']).columns
         for col in dt_cols:
-                df[col] = df[col].dt.tz_localize(None)
+            df[col] = df[col].dt.tz_localize(None)
     # Write both dataframes to one Excel file
     with pd.ExcelWriter(
         filename,
@@ -308,7 +298,7 @@ def main():
         received = pd.read_excel(args.xlsxfile, sheet_name='received')
         sent = pd.read_excel(args.xlsxfile, sheet_name='sent')
 
-        make_plots(received, sent)
+        make_plots(received, sent, args.xlsxfile)
 
     else:
         parser.print_usage()

@@ -28,6 +28,13 @@ def received_stats(received: pd.DataFrame) -> None:
 
 # SENT CMPCTBLOCK stats
 def sent_stats(sent: pd.DataFrame) -> None:
+    avg_send_size = sent['send_size'].mean()
+    print(f"The average CMPCTBLOCK we sent was {avg_send_size:.2f} bytes.")
+    prefilled_sends = sent[sent['prefill_size'] > 0]
+    print(f"The average prefilled CMPCTBLOCK we sent was {prefilled_sends['send_size'].mean():.2f} bytes.")
+    not_prefilled_sends = sent[sent['prefill_size'] == 0]
+    print(f"The average prefilled CMPCTBLOCK we sent was {not_prefilled_sends['send_size'].mean():.2f} bytes.")
+
     total_cb_sent = len(sent)
 
     avg_available_bytes_all = sent['window_bytes_available'].mean()
@@ -52,6 +59,16 @@ def sent_stats(sent: pd.DataFrame) -> None:
 
     print(f"{prefills_that_fit}/{total_prefilled_cb_sent} prefilled blocks sent fit in the available bytes. ({prefill_fit_rate * 100:.2f}%)")
 
+
+def sent_window_stats(sent: pd.DataFrame) -> None:
+    window_sizes = sent['tcp_window_size']
+    print(f"TCP Window Size: Avg: {window_sizes.mean():.2f} bytes, Median: {window_sizes.median()}, Mode: {window_sizes.mode()[0]}")
+    mode_freq = (window_sizes == window_sizes.mode()[0]).sum()
+    print(f"The mode represented {mode_freq}/{len(window_sizes)} windows. ({mode_freq/len(window_sizes)*100:.2f}%)")
+    avg_window_used = sent['window_bytes_used'].mean()
+    print(f"Avg. TCP window bytes used: {avg_window_used:.2f} bytes")
+    avg_window_available = sent['window_bytes_available'].mean()
+    print(f"Avg. TCP window bytes available: {avg_window_available:.2f} bytes")
 
 def sent_already_over_stats(sent: pd.DataFrame) -> None:
     total_cb_sent = len(sent)
