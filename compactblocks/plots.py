@@ -1,5 +1,6 @@
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import mplcursors
 import numpy as np
 import seaborn as sns
 
@@ -99,8 +100,8 @@ def plot_tcp_window_histogram(sent):
 def plot_prefill_distributions(sent):
     prefilled_sends = sent[sent['prefill_size'] > 0]
 
-    xticks = [256, 1024, 10*1024, 100*1024, 1024*1024, 4*1024*1024]
-    xtick_labels = ['256B', '1KiB', '10KiB', '100KiB', '1MiB', '4MiB']
+    xticks = [256, 512, 1024, 2*1024, 4*1024, 10*1024, 100*1024, 1024*1024, 4*1024*1024]
+    xtick_labels = ['256B', '512B', '1KiB', '2KiB', '4KiB', '10KiB', '100KiB', '1MiB', '4MiB']
     # Special red vertical line for the average available space for prefill
     avg_prefill_size = prefilled_sends['window_bytes_available'].mean()
     avg_prefill_line = {
@@ -134,4 +135,4 @@ def plot_prefill_distributions(sent):
 
     ax2.axvline(**avg_prefill_line)
     ax2.legend()
-    plt.show(block=True)
+    mplcursors.cursor([ax1, ax2], hover=True)
