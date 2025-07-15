@@ -64,11 +64,12 @@ def sent_window_stats(sent: pd.DataFrame) -> None:
     window_sizes = sent['tcp_window_size']
     print(f"TCP Window Size: Avg: {window_sizes.mean():.2f} bytes, Median: {window_sizes.median()}, Mode: {window_sizes.mode()[0]}")
     mode_freq = (window_sizes == window_sizes.mode()[0]).sum()
-    print(f"The mode represented {mode_freq}/{len(window_sizes)} windows. ({mode_freq/len(window_sizes)*100:.2f}%)")
+    print(f"The mode represented {mode_freq}/{len(window_sizes)} windows. ({mode_freq / len(window_sizes) * 100:.2f}%)")
     avg_window_used = sent['window_bytes_used'].mean()
     print(f"Avg. TCP window bytes used: {avg_window_used:.2f} bytes")
     avg_window_available = sent['window_bytes_available'].mean()
     print(f"Avg. TCP window bytes available: {avg_window_available:.2f} bytes")
+
 
 def sent_already_over_stats(sent: pd.DataFrame) -> None:
     total_cb_sent = len(sent)
